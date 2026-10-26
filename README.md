@@ -20,14 +20,10 @@
 A simple installation experience for PY2ISO.
 
 <br>
-<p align="center">
-  <a href="install.md">
-    <img src="https://img.shields.io/badge/Download_PY2ISO-10B981?style=for-the-badge&logo=python&logoColor=white&color=10B981&labelColor=0F172A" alt="Download PY2ISO" />
-  </a>
-  &nbsp;
-  <a href="docs.md">
-    <img src="https://img.shields.io/badge/Documentation-3B82F6?style=for-the-badge&logo=bookstack&logoColor=white&color=3B82F6&labelColor=0F172A" alt="PY2ISO Documentation" />
-  </a>
+<p align="centre">
+  <a href="install.md" style="text-decoration: none; display: inline-block; padding: 12px 28px; background-color: #000000; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; font-weight: 500; border-radius: 9999px; transition: background-color 0.2s ease;">Download</a>
+  &nbsp;&nbsp;
+  <a href="docs.md" style="text-decoration: none; display: inline-block; padding: 12px 28px; background-color: #000000; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; font-weight: 500; border-radius: 9999px; transition: background-color 0.2s ease;">Documentation</a>
 </p>
 <br>
 
