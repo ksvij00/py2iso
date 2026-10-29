@@ -176,7 +176,8 @@ def logo():
     print("██╔═══╝   ╚██╔╝  ██╔═══╝ ██║╚════██║██║   ██║")
     print("██║        ██║   ███████╗██║███████║╚██████╔╝")
     print("╚═╝        ╚═╝   ╚══════╝╚═╝╚══════╝ ╚═════╝")
-print("""
+def hlp():
+    print("""
 
 
 
@@ -1111,7 +1112,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 3 or sys.argv[1] != "cook" or sys.argv[2].startswith("-"):
         if len(sys.argv) > 1:
             if sys.argv[1] == "-h" or sys.argv[1] == "-help":
-                help()
+                hlp()
                 sys.exit(1)
             
         print(__doc__)
