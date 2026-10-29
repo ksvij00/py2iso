@@ -1,191 +1,257 @@
+# py2iso documentation
 
+py2iso turns a Python project folder into a bootable ISO. The ISO starts a minimal Linux system and runs your `MAIN` program right after power-on, with no desktop and no login.
 
-# PY2ISO Documentation
+## Quick start
 
-PY2ISO packages a Python project into a bootable ISO image. Each project must include a manifest in its root directory named **`py2iso.txt`** or **`py2iso.md`**.
-
-The manifest uses simple `key = value` syntax to describe how the application is built, packaged, and executed.
-
-## Contents
-
-- [Manifest example](#manifest-example)
-- [Configuration reference](#configuration-reference)
-- [Command-line usage](#command-line-usage)
-- [CLI shortcuts](#cli-shortcuts)
-- [Runtime API](#runtime-api)
-
-## Manifest example
-
-Create `py2iso.txt` in your project root:
-
-```ini
-main = main.py
-setup = setup.py
-version = 1.0.0
-iso_name = my_app.iso
-core = alpine
-compressing = normal
-ui = false
-net = true
-packages = sqlite3, curl
-require = pip:requests, pip:numpy, hf://bartowski/Llama-3-8B-Instruct-GGUF/llama-3-8b-instruct-q4_k_m.gguf
+```bash
+p2i cook ./myproj                  # uses py2iso.txt in ./myproj
+p2i cook ./myproj --debian --full  # command-line options override the manifest
 ```
 
-Example project layout:
+The result is written to `<project>/<BUILD_FOLDER>/<ISO_NAME>`, which defaults to `myproj/build/OUT.iso`.
 
-```text
-my_app/
-├── py2iso.txt
-├── main.py
-├── setup.py
-└── requirements.txt
+Test it:
+
+```bash
+qemu-system-x86_64 -cdrom myproj/build/OUT.iso -m 2048
 ```
 
-`main` is required. The other values are optional and can be adjusted for your project.
+## Command
 
-## Configuration reference
+```
+p2i cook <folder> [core] [compressing] [--ui[=true|false]] [--key=value ...]
+```
 
-Options can be set in the manifest or overridden with command-line arguments when running `py2iso`.
+`cook` is the only command. `<folder>` must contain `py2iso.txt` or `py2iso.md`. If both exist, `py2iso.txt` wins.
 
-| Option | Default | Allowed values / type | Description |
+Settings come from three places, in this order of priority:
+
+1. Command-line options
+2. The manifest
+3. Built-in defaults
+
+## Launch options
+
+### Core: the base system
+
+| Option | Meaning |
+|---|---|
+| `--alpine` | Alpine Linux base. Small (tens of MB), uses musl libc. Default. |
+| `--debian` | Debian bookworm base. Larger, uses glibc, so more Python wheels install. |
+
+Manifest equivalent: `CORE=Alpine` or `CORE=Debian`.
+
+### Compressing: what is packaged and what is downloaded
+
+| Option | Python libraries | Hugging Face files | Network needed at boot |
 |---|---|---|---|
-| `main` | `""` | Filename (`str`) | **Required.** Entry-point script executed automatically when the ISO boots. |
-| `setup` | `""` | Filename (`str`) | Optional script run during first-boot setup, after pip packages and Hugging Face assets are downloaded. |
-| `require` | `""` | Comma-separated list | External dependencies: `pip:` packages, local file/folder paths, or Hugging Face model/dataset URLs using `hf://`. |
-| `core` | `alpine` | `alpine`, `debian` | Base Linux distribution used for the initramfs root environment. |
-| `compressing` | `normal` | `slim`, `normal`, `full` | Controls build size and feature-inclusion tier. |
-| `ui` | `false` | `true`, `false` | Boots into an X11 graphical session with Tkinter support enabled. |
-| `net` | `false` | `true`, `false` | Enables DHCP networking at boot. Automatically enabled if dependencies require external downloads. |
-| `gpudrivers` | `false` | `true`, `false` | Includes open-source GPU drivers and firmware, including Mesa, Vulkan, and vendor firmware for AMD, Intel, and Nvidia. |
-| `serial` | `false` | `true`, `false` | Sends kernel logs and console output to the serial port, useful for QEMU testing and headless debugging. |
-| `shell` | `false` | `true`, `false` | Opens an interactive shell after the main script terminates instead of automatically powering off. |
-| `bash` | `true` | `true`, `false` | Includes GNU Bash on Alpine builds. Debian includes Bash by default. |
-| `packages` | `""` | Comma-separated list | Additional operating-system packages installed from the base distribution's repositories. |
-| `iso_name` | `OUT.iso` | Filename (`str`) | Output ISO filename. |
-| `build_folder` | `build` | Directory path | Temporary workspace used during the build. |
+| `--slim` | Downloaded on first boot | Downloaded on first boot | Yes |
+| `--normal` | Packaged in the ISO | Downloaded on first boot | Only if `REQUIRE` has Hugging Face links |
+| `--full` | Packaged in the ISO | Downloaded at build time and packaged | No |
 
-### The `require` field
+Manifest equivalent: `COMPRESSING=Slim`, `COMPRESSING=Normal`, or `COMPRESSING=Full`. Default is Normal.
 
-Use `require` to declare dependencies that are not simply operating-system packages.
+`--slim` and `--normal` turn networking on automatically when they need it.
 
-```ini
-require = pip:requests, pip:numpy
-```
+### UI
 
-Hugging Face assets can be specified with an `hf://` reference:
-
-```ini
-require = hf://bartowski/Llama-3-8B-Instruct-GGUF/llama-3-8b-instruct-q4_k_m.gguf
-```
-
-Local files or folders can also be included in the comma-separated list. Ensure the syntax and paths match what your installed PY2ISO version supports.
-
-## Command-line usage
-
-Pass a project directory to `py2iso`. Command-line options can override values from the manifest.
-
-### Build with Debian and full compression
-
-```sh
-py2iso ./my_app --debian --compressing=full
-```
-
-### Override the ISO name and enable UI and networking
-
-```sh
-py2iso ./my_app --iso_name=app_live.iso --ui=true --net=true
-```
-
-### CLI shortcuts
-
-| Shortcut | Effect |
+| Option | Meaning |
 |---|---|
-| `--alpine` | Select Alpine as the base distribution. |
-| `--debian` | Select Debian as the base distribution. |
-| `--slim` | Select the slim compression tier. |
-| `--normal` | Select the normal compression tier. |
-| `--full` | Select the full compression tier. |
+| `--ui` or `--ui=true` | Boot into an X11 graphical session. Tkinter windows work. |
+| `--ui=false` | Text console only. Default. |
 
-## Runtime API
+Manifest equivalent: `UI=TRUE` or `UI=FALSE`.
 
-Inside Python scripts running in the ISO environment, PY2ISO injects utility functions into the `os` module through `sitecustomize`.
+### Other command-line options
 
-### `os.exec(cmd, ...)`
+Any manifest key can also be given as `--key=value`. Boolean options accept `true`, `false`, `yes`, `no`, `1`, `0`, `on`, and `off`. Boolean flags with no value mean `true`.
 
-Executes a shell command.
+| Option | Default | Effect |
+|---|---|---|
+| `--net` | off | Brings up networking with DHCP at boot. Needed for `os.apt()` at runtime. |
+| `--gpudrivers` | off | Adds open-source GPU drivers (Mesa, libdrm) and firmware. |
+| `--serial` | off | Also prints to the serial port. Use it with `-nographic` for testing. |
+| `--shell` | off | Opens a shell after `MAIN` ends instead of powering off. |
+| `--bash` | on | Installs GNU bash on the Alpine core. Debian always has bash. |
+| `--cmdline="..."` | empty | Extra kernel parameters, for example `--cmdline="noapic"`. |
+| `--packages="a,b"` | empty | Extra OS packages, comma separated. |
 
-**Stream output live:**
+Unknown options print a warning and are ignored.
 
-```python
-os.exec("apt-get update")
+## The manifest: `py2iso.txt`
+
+Create this file in your project folder.
+
+```
+py2iso
+CORE=Alpine
+COMPRESSING=Normal
+UI=FALSE
+REQUIRE="utils.py, data, https://huggingface.co/org/model, pip:rich"
+SETUP="setup.py"
+MAIN="main.py"
+VERSION="0.1"
+ISO_NAME="demo.iso"
+BUILD_FOLDER="build"
 ```
 
-Bare calls stream output to standard output.
+### Format rules
 
-**Capture output in a result object:**
+- The first line may be `py2iso`. It is ignored.
+- Each setting is `KEY=value`, one per line.
+- Keys and values are case-insensitive. `main=`, `MAIN=`, and `Main=` are the same.
+- Quotes around values are optional. Use them when a value contains spaces or commas.
+- Lines starting with `#` are comments. Lines that start with `-` or `*` (markdown bullets) are read as normal settings.
+- Lines without `=` are ignored.
+- `py2iso.md` uses the same format, so markdown bullets and code fences around the settings are fine.
 
-```python
-res = os.exec("ls")
-print(res.returncode)
-print(res.stdout)
+### Keys
+
+| Key | Required | Default | Description |
+|---|---|---|---|
+| `MAIN` | Yes | none | Entry-point file, relative to the project folder. It runs at boot. |
+| `SETUP` | No | none | A file that runs once on first boot, before `MAIN`. Relative path. |
+| `REQUIRE` | No | none | Comma-separated extra items to include (see below). |
+| `CORE` | No | `Alpine` | `Alpine` or `Debian`. |
+| `COMPRESSING` | No | `Normal` | `Slim`, `Normal`, or `Full`. |
+| `UI` | No | `FALSE` | `TRUE` or `FALSE`. |
+| `VERSION` | No | empty | Shown at boot as `PyOS <version>`. |
+| `ISO_NAME` | No | `OUT.iso` | Output file name. `.iso` is added if missing. |
+| `BUILD_FOLDER` | No | `build` | Where the build and output go, relative to the project folder. |
+| `NET` | No | `FALSE` | Brings up networking at boot. |
+| `GPUDRIVERS` | No | `FALSE` | Adds GPU drivers and firmware. |
+| `SERIAL` | No | `FALSE` | Serial console output, for testing. |
+| `SHELL` | No | `FALSE` | Shell after `MAIN`. |
+| `BASH` | No | `TRUE` | Bash on the Alpine core. |
+| `CMDLINE` | No | empty | Extra kernel parameters. |
+| `PACKAGES` | No | empty | Extra OS packages, comma separated. |
+
+Aliases: `REQURE` is accepted for `REQUIRE`, `ISO` for `ISO_NAME`, `BUILD` for `BUILD_FOLDER`, and `GPU` for `GPUDRIVERS`.
+
+Unknown keys print a warning and are ignored.
+
+### `REQUIRE` items
+
+`REQUIRE` takes a comma-separated list. Each item is one of:
+
+| Item | Example | What happens |
+|---|---|---|
+| Local file | `utils.py` | Copied into `/app/utils.py` in the ISO. |
+| Local folder | `data` | Copied into `/app/data/`. Symlinks are kept. `__pycache__` and `.git` are skipped. |
+| Hugging Face repo | `https://huggingface.co/org/model` | Downloaded and cached for `from_pretrained()`. |
+| Hugging Face file | `https://huggingface.co/org/model/blob/main/file.bin` | Downloads just that file. |
+| Hugging Face dataset | `https://huggingface.co/datasets/org/data` | Dataset repo. |
+| Short form | `hf://org/model` | Same as the full repo link. |
+| Pip package | `pip:rich` | Installed as a library, even if no import of it is found. |
+
+Paths are relative to the project folder. A missing path stops the build with an error.
+
+Hugging Face downloads use the `HF_TOKEN` environment variable on the build machine when a model is gated. In `--full` mode the files are packaged. In `--normal` and `--slim` mode they are downloaded on first boot.
+
+### Example project
+
+```
+myproj/
+  py2iso.txt
+  main.py
+  setup.py
+  utils.py
+  data/words.txt
 ```
 
-When the result is assigned to a variable, output is captured silently by default. The result object contains `.returncode` and `.stdout`.
+`main.py`:
 
-Supported options:
+```python
+import os
+from utils import greet
 
-| Option | Purpose |
+def OS():
+    serial = True          # build option, not copied into the ISO
+    output = "demo.iso"    # build option
+
+    print(greet())
+    os.exec("uname -a")    # bare call: prints live
+```
+
+Only top-level variables inside `OS()` named `serial`, `shell`, `ui`, `net`, `gpudrivers`, `cmdline`, `packages`, `output`, and similar options are read as build options. Everything else in the function runs inside the ISO.
+
+## Imports and libraries
+
+py2iso reads the `import` statements in `MAIN`, `SETUP`, and every `.py` file under `REQUIRE`. Standard library modules are skipped. Other imports are mapped to PyPI names and installed.
+
+Some common names are mapped automatically: `PIL` to `pillow`, `cv2` to `opencv-python-headless`, `yaml` to `pyyaml`, `sklearn` to `scikit-learn`, `bs4` to `beautifulsoup4`, `dateutil` to `python-dateutil`, `serial` to `pyserial`, and `dotenv` to `python-dotenv`.
+
+Local modules you import are not installed from PyPI, because py2iso recognises them as local files or folders in the project.
+
+Packages must have a wheel for the chosen core. Alpine uses musl wheels, so many compiled packages (for example torch) will not install there. Use `--debian` for those.
+
+## Runtime helpers (inside the ISO)
+
+These are available to every program in the ISO, without an import.
+
+| Call | Behaviour |
 |---|---|
-| `show=True` | Force live output even when assigning the result to a variable. |
-| `quiet=True` | Suppress output. |
-| `check=True` | Raise `CalledProcessError` if the command exits with a non-zero status. |
-| `interactive=True` | Allocate a real terminal session for interactive tools such as `htop`, `nano`, or text-based editors. |
+| `os.exec("cmd")` | Runs a shell command. A bare statement prints output live. An assigned result stays silent. |
+| `r = os.exec("cmd")` | Silent. `r.stdout` holds the output, `r.returncode` the exit code. Truthy on success. |
+| `os.exec("cmd", show=True)` | Prints even when assigned. |
+| `os.exec("cmd", quiet=True)` | Never prints. |
+| `os.exec("cmd", on_line=fn)` | Calls `fn(line)` for each output line. |
+| `os.exec("cmd", check=True)` | Raises an error on a non-zero exit code. |
+| `os.exec("htop", interactive=True)` | Gives the command the real terminal. Output is not captured. |
+| `for line in os.stream("cmd"):` | Yields lines as they appear. Never prints. |
+| `os.apt("pkg", "pkg2")` | Installs packages. Needs `NET=TRUE`. |
+| `os.apt("pkg", remove=True)` | Removes packages. |
 
-### `os.stream(cmd)`
+The build rewrites bare `os.exec(...)` and `os.apt(...)` statements to their printing form, so the rule above applies at build time.
 
-Yields command output one line at a time without printing it automatically.
+On the Alpine core, `os.apt` and the `apt` command translate to `apk`. Common Debian names are mapped (`build-essential` to `build-base`, `python3-pip` to `py3-pip`). On the Debian core, `os.apt` runs `apt-get`, which needs `NET=TRUE` and a reachable mirror.
 
-```python
-for line in os.stream("tail -f /var/log/syslog"):
-    print("Log entry:", line)
+## Setup file
+
+`SETUP` runs once, before `MAIN`, on first boot. It runs with the same environment as `MAIN`, so it can install packages with `os.apt`, download data, and so on.
+
+On every boot it runs again, because the system lives in RAM and the first-boot marker is lost at shutdown.
+
+## Output
+
+The build writes:
+
+```
+<project>/<BUILD_FOLDER>/<ISO_NAME>      the bootable ISO
+<project>/<BUILD_FOLDER>/work/           temporary files, safe to delete
+<project>/<BUILD_FOLDER>/cache/          downloaded packages, kept to speed up rebuilds
 ```
 
-Use this when your program needs to process command output as it arrives.
+## Requirements
 
-### `os.apt(*pkgs, remove=False)`
+- Python 3.10 or newer, on macOS, Windows, or Linux
+- Internet access during the build
+- pip, for libraries (`python3 -m pip`)
+- Optional: `huggingface_hub` for Hugging Face links (installed automatically when needed)
 
-Manages operating-system packages at runtime. PY2ISO maps package operations to `apk` on Alpine and `apt-get` on Debian.
+No Docker, root access, or external ISO tools are needed.
 
-**Install packages:**
+## Testing
 
-```python
-os.apt("htop", "curl")
+Boot the ISO in QEMU:
+
+```bash
+qemu-system-x86_64 -cdrom build/OUT.iso -m 2048
 ```
 
-**Remove a package:**
+For text output in a terminal, add `SERIAL=TRUE` to the manifest, rebuild, and run:
 
-```python
-os.apt("curl", remove=True)
+```bash
+qemu-system-x86_64 -cdrom build/OUT.iso -m 2048 -nographic -no-reboot
 ```
 
-Package names must be available in the configured distribution's repositories.
+Press `Ctrl-A` then `X` to quit. Use `-m 4096` or more for `--debian` and `--full`.
 
-## Tips and troubleshooting
+## Limits
 
-- Confirm that the file is named `py2iso.txt` or `py2iso.md` and is in the project root.
-- Ensure the `main` entry-point file exists.
-- Check that dependency names, local paths, and Hugging Face references are valid.
-- Enable `net = true` when your application needs network access at runtime. Build-time dependency downloads may also require networking during setup.
-- Use `serial = true` and `shell = true` when debugging boot or runtime problems.
-- Choose `core = alpine` or `core = debian` based on the packages and tools your application needs.
-
----
-
-<div align="center">
-
-**PY2ISO** · *From Python project to bootable ISO*
-
-[Repository](https://github.com/ksvij00/py2iso) · [Install](install.md) · [Issues](https://github.com/ksvij00/py2iso/issues)
-
-</div>
-
+- **BIOS boot only.** Legacy or CSM mode is needed on real PCs. UEFI-only machines are not supported yet.
+- **Runs from RAM.** The whole system and any packaged models must fit in memory.
+- **ISO size.** An ISO file cannot exceed 4 GiB. Use `--normal` or `--slim` for large models.
+- **First-boot work repeats.** Downloads in Slim and Normal modes happen on every boot.
+- **Experimental.** The pure-Python ISO writer and the Debian core are new.
