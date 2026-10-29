@@ -13,8 +13,6 @@
 ╚═╝        ╚═╝   ╚══════╝╚═╝╚══════╝ ╚═════╝
 </pre>
 
-### `PYTHON → ISO`
-
 **From Python project to bootable image.**
 
 A simple installation experience for PY2ISO.
@@ -27,7 +25,6 @@ A simple installation experience for PY2ISO.
 </p>
 <br>
 
-`AUTOMATED SETUP` · `PYTHON PROJECTS` · `ISO WORKFLOW`
 
 </div>
 
@@ -65,21 +62,6 @@ curl -fsSL "https://raw.githubusercontent.com/ksvij00/py2iso/main/installers/ins
 | [Source code](https://github.com/ksvij00/py2iso) | Browse the repository |
 | [Report an issue](https://github.com/ksvij00/py2iso/issues) | Report bugs or request features |
 
-## The idea
-
-```
-PYTHON PROJECT
-      |
-      v
- CONFIGURATION
-   py2iso.txt
-      |
-      v
- IMAGE BUILD
-      |
-      v
-  BOOTABLE ISO
-```
 ---
 
 <div align="center">
