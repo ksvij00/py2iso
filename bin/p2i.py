@@ -169,6 +169,101 @@ exit 0
 
 
 # ------------------------------------------------------------ small helpers
+def logo():
+    print("██████╗ ██╗   ██╗██████╗ ██╗███████╗ ██████╗")
+    print("██╔══██╗╚██╗ ██╔╝╚════██╗██║██╔════╝██╔═══██╗")
+    print("██████╔╝ ╚████╔╝  █████╔╝██║███████╗██║   ██║")
+    print("██╔═══╝   ╚██╔╝  ██╔═══╝ ██║╚════██║██║   ██║")
+    print("██║        ██║   ███████╗██║███████║╚██████╔╝")
+    print("╚═╝        ╚═╝   ╚══════╝╚═╝╚══════╝ ╚═════╝")
+print("""
+
+
+
+============================
+PY2ISO CONFIGURATION OPTIONS
+============================
+
+main
+  Default:  (required)
+  Type:     Filename
+  Purpose:  Script executed automatically when the ISO boots.
+
+setup
+  Default:  None
+  Type:     Filename
+  Purpose:  Optional first-boot setup script, executed after pip
+            packages and Hugging Face assets are downloaded.
+
+require
+  Default:  None
+  Type:     Comma-separated list
+  Purpose:  External dependencies, including:
+              - pip: packages
+              - Local files and folders
+              - Hugging Face models and datasets (hf://)
+
+core
+  Default:  alpine
+  Options:  alpine, debian
+  Purpose:  Base Linux distribution for the initramfs environment.
+
+compressing
+  Default:  normal
+  Options:  slim, normal, full
+  Purpose:  Controls build size and included features.
+
+ui
+  Default:  false
+  Options:  true, false
+  Purpose:  Enables an X11 graphical session with Tkinter support.
+
+net
+  Default:  false
+  Options:  true, false
+  Purpose:  Enables DHCP networking at boot. Automatically enabled
+            when dependencies require external downloads.
+
+gpudrivers
+  Default:  false
+  Options:  true, false
+  Purpose:  Includes open-source GPU drivers and firmware, including
+            Mesa, Vulkan, and AMD, Intel, and Nvidia support.
+
+serial
+  Default:  false
+  Options:  true, false
+  Purpose:  Sends kernel logs and console output to the serial port.
+            Useful for QEMU testing and headless debugging.
+
+shell
+  Default:  false
+  Options:  true, false
+  Purpose:  Opens an interactive shell after the main script exits
+            instead of automatically powering off.
+
+bash
+  Default:  true
+  Options:  true, false
+  Purpose:  Includes GNU Bash in Alpine builds. Debian includes Bash
+            by default.
+
+packages
+  Default:  None
+  Type:     Comma-separated list
+  Purpose:  Additional OS packages installed from the base
+            distribution's repositories.
+
+iso_name
+  Default:  OUT.iso
+  Type:     Filename
+  Purpose:  Sets the output ISO filename.
+
+build_folder
+  Default:  build
+  Type:     Directory path
+  Purpose:  Temporary workspace used during the build.
+""")
 def get(url, cache=False):
     path = os.path.join(CACHE, re.sub(r"[^\w.-]+", "_", url)[-200:]) if (cache and CACHE) else None
     if path and os.path.exists(path):
@@ -1012,7 +1107,10 @@ def cook(folder, cli):
 
 
 if __name__ == "__main__":
+    logo()
     if len(sys.argv) < 3 or sys.argv[1] != "cook" or sys.argv[2].startswith("-"):
+        if sys.argv[1] == "-h" or sys.argv[1] == "-help"
+            help()
         print(__doc__)
         sys.exit(1)
     cook(sys.argv[2], parse_cli(sys.argv[3:]))
