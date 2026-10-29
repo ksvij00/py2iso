@@ -1,5 +1,3 @@
-# PY2ISO
-
 <div align="center">
 
 <br>
@@ -18,6 +16,9 @@
 A simple installation experience for PY2ISO.
 
 <br>
+
+---
+
 <p align="centre">
   <a href="install.md" style="text-decoration: none; display: inline-block; padding: 12px 28px; background-color: #000000; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; font-weight: 500; border-radius: 9999px; transition: background-color 0.2s ease;">Download</a>
   &nbsp;&nbsp;
