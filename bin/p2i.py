@@ -1109,7 +1109,7 @@ def cook(folder, cli):
 if __name__ == "__main__":
     logo()
     if len(sys.argv) < 3 or sys.argv[1] != "cook" or sys.argv[2].startswith("-"):
-        if sys.argv[1] == "-h" or sys.argv[1] == "-help"
+        if sys.argv[1] == "-h" or sys.argv[1] == "-help":
             help()
         print(__doc__)
         sys.exit(1)
