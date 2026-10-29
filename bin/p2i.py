@@ -2,6 +2,7 @@
 import ast, gzip, io, json, lzma, os, re, shlex, shutil, struct, subprocess, sys
 import tarfile, tempfile, time, urllib.request
 
+v = "alpha-testing"
 ALPINE, PYVER_ALPINE = "v3.20", "3.12"
 DEB_SUITE, PYVER_DEB = "bookworm", "3.11"
 ARCH = "x86_64"
@@ -1114,7 +1115,10 @@ if __name__ == "__main__":
             if sys.argv[1] == "-h" or sys.argv[1] == "-help":
                 hlp()
                 sys.exit(1)
-            
-        print(__doc__)
-        sys.exit(1)
+            elif sys.argv[1] == "-v" or sys.argv[1] == "-version":
+                print(v)
+            else: 
+                print(__doc__)
+                sys.exit(1)
+                
     cook(sys.argv[2], parse_cli(sys.argv[3:]))
