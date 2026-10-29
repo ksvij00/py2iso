@@ -2,7 +2,7 @@
 import ast, gzip, io, json, lzma, os, re, shlex, shutil, struct, subprocess, sys
 import tarfile, tempfile, time, urllib.request
 
-v = "alpha-testing"
+v = "V - 1 Stable"
 ALPINE, PYVER_ALPINE = "v3.20", "3.12"
 DEB_SUITE, PYVER_DEB = "bookworm", "3.11"
 ARCH = "x86_64"
