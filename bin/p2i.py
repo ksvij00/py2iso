@@ -1003,6 +1003,8 @@ def make_iso(out, kernel, initrd, sl, cmdline, serial, label="PYOS"):
 # ------------------------------------------------------------------- cook
 def cook(folder, cli):
     global CACHE
+    if len(folder) < 1:
+        sys.exit("Invalid syntax : Enter folder")
     folder = os.path.abspath(folder)
     if not os.path.isdir(folder):
         sys.exit(f"not a folder: {folder}")
