@@ -1117,8 +1117,9 @@ if __name__ == "__main__":
                 sys.exit(1)
             elif sys.argv[1] == "-v" or sys.argv[1] == "-version":
                 print(v)
+                sys.exit(1)
             else: 
                 print(__doc__)
                 sys.exit(1)
-                
+    sys.exit(1)
     cook(sys.argv[2], parse_cli(sys.argv[3:]))
