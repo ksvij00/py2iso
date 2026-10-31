@@ -1,10 +1,6 @@
-```powershell
-# py2iso installer for Windows (PowerShell 5.1 or 7+).
-# Usage:
-#   irm https://raw.githubusercontent.com/ksvij00/py2iso/main/installers/install.ps1 | iex
-#
-# Optional:
-#   $env:PY2ISO_HOME = "C:\tools\py2iso"
+
+# PY2ISO installer for Windows (PowerShell 5.1 / 7+)
+# irm https://raw.githubusercontent.com/ksvij00/py2iso/main/installers/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
@@ -41,7 +37,7 @@ function Die([string]$Message) {
 }
 
 # --------------------------------------------------
-# Progress bar
+# Progress
 # --------------------------------------------------
 
 function Progress(
@@ -56,7 +52,9 @@ function Progress(
 
     $Bar = ("#" * $Filled) + ("-" * $Empty)
 
-    Write-Host "`r[$Bar] $($Percent.ToString().PadLeft(3))% $Label".PadRight(90) -NoNewline
+    Write-Host (
+        "`r[$Bar] $($Percent.ToString().PadLeft(3))% $Label".PadRight(90)
+    ) -NoNewline
 
     if ($Current -ge $Total) {
         Write-Host ""
@@ -64,12 +62,71 @@ function Progress(
 }
 
 # --------------------------------------------------
+# Refresh PATH
+# --------------------------------------------------
+
+function Refresh-Path {
+    $MachinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+    $env:Path = @($MachinePath, $UserPath) -join ";"
+
+    $GitPaths = @(
+        "$env:ProgramFiles\Git\cmd",
+        "$env:ProgramFiles\Git\bin",
+        "$env:LOCALAPPDATA\Programs\Git\cmd",
+        "$env:LOCALAPPDATA\Programs\Git\bin"
+    )
+
+    foreach ($PathEntry in $GitPaths) {
+        if ((Test-Path $PathEntry) -and
+            (($env:Path -split ";") -notcontains $PathEntry)) {
+            $env:Path += ";$PathEntry"
+        }
+    }
+}
+
+# --------------------------------------------------
+# Git installation
+# --------------------------------------------------
+
+function Ensure-Git {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        return
+    }
+
+    Say "Git not found. Installing Git..."
+
+    $Winget = Get-Command winget -ErrorAction SilentlyContinue
+
+    if (-not $Winget) {
+        Die "WinGet is unavailable. Install App Installer from Microsoft Store, then rerun this installer."
+    }
+
+    & winget install --id Git.Git --exact `
+        --silent `
+        --accept-package-agreements `
+        --accept-source-agreements `
+        --disable-interactivity *> $null
+
+    $InstallCode = $LASTEXITCODE
+
+    Refresh-Path
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Die "Git installation failed (exit code: $InstallCode). Restart PowerShell and retry."
+    }
+
+    Say "Git installed successfully."
+}
+
+# --------------------------------------------------
 # Requirements
 # --------------------------------------------------
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Die "Git is required. Install it with: winget install Git.Git"
-}
+Progress 1 6 "Checking dependencies"
+
+Ensure-Git
 
 if (Get-Command py -ErrorAction SilentlyContinue) {
     $PyExe = "py"
@@ -78,34 +135,40 @@ if (Get-Command py -ErrorAction SilentlyContinue) {
     $PyExe = "python"
     $PyArgs = @()
 } else {
-    Die "Python 3.10+ is required. Install it with: winget install Python.Python.3.12"
+    Die "Python 3.10+ is required. Install with: winget install Python.Python.3.12"
 }
 
-& $PyExe @PyArgs -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" 2>$null 1>$null
+& $PyExe @PyArgs -c `
+    "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" `
+    *> $null
 
 if ($LASTEXITCODE -ne 0) {
     Die "Python 3.10 or newer is required."
 }
 
-# Resolve Python to a usable command for the shim.
 $Run = if ($PyExe -eq "py") { "py -3" } else { "python" }
 
 # --------------------------------------------------
-# Temporary directory and cleanup
+# Temporary directory
 # --------------------------------------------------
 
-$Tmp = Join-Path ([IO.Path]::GetTempPath()) ("py2iso-" + [Guid]::NewGuid().ToString("N"))
+$Tmp = Join-Path ([IO.Path]::GetTempPath()) (
+    "py2iso-" + [Guid]::NewGuid().ToString("N")
+)
 
 try {
-    Progress 1 5 "Cloning repository"
+    # --------------------------------------------------
+    # Clone
+    # --------------------------------------------------
+
+    Progress 2 6 "Cloning repository"
 
     $null = New-Item -ItemType Directory -Path $Tmp -Force
 
-    # Suppress Git output while preserving its exit code.
-    & git clone --depth 1 $Repo $Tmp 2>$null 1>$null
+    & git clone --depth 1 $Repo $Tmp *> $null
 
     if ($LASTEXITCODE -ne 0) {
-        Die "Clone failed. Check network access and repository visibility."
+        Die "Git clone failed. Check network access and repository visibility."
     }
 
     $Src = Join-Path $Tmp $File
@@ -114,29 +177,36 @@ try {
         Die "$File not found in the repository."
     }
 
-    Progress 2 5 "Preparing installation"
+    # --------------------------------------------------
+    # Install
+    # --------------------------------------------------
+
+    Progress 3 6 "Installing PY2ISO"
 
     $null = New-Item -ItemType Directory -Force -Path $Dir
 
-    Copy-Item -LiteralPath $Src -Destination (Join-Path $Dir "p2i.py") -Force
+    Copy-Item -LiteralPath $Src `
+        -Destination (Join-Path $Dir "p2i.py") -Force
 
-    Progress 3 5 "Creating command launcher"
+    # --------------------------------------------------
+    # Command launcher
+    # --------------------------------------------------
 
-    # cmd.exe launcher
+    Progress 4 6 "Creating command launcher"
+
     $Shim = "@echo off`r`n$Run ""%~dp0p2i.py"" %*`r`n"
-    $ShimPath = Join-Path $Dir "$Cmd.cmd"
 
     [IO.File]::WriteAllText(
-        $ShimPath,
+        (Join-Path $Dir "$Cmd.cmd"),
         $Shim,
         [Text.Encoding]::ASCII
     )
 
     # --------------------------------------------------
-    # Add installation directory to persistent user PATH
+    # User PATH
     # --------------------------------------------------
 
-    Progress 4 5 "Configuring PATH"
+    Progress 5 6 "Configuring PATH"
 
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 
@@ -144,36 +214,37 @@ try {
         $UserPath = ""
     }
 
-    $PathEntries = @(
-        $UserPath -split ";" |
-        Where-Object { $_.Trim() -ne "" }
-    )
+    $Entries = @($UserPath -split ";" | Where-Object {
+        $_.Trim() -ne ""
+    })
 
-    $AlreadyPresent = $false
+    $Exists = $false
 
-    foreach ($Entry in $PathEntries) {
+    foreach ($Entry in $Entries) {
         if ([string]::Equals(
             $Entry.TrimEnd("\"),
             $Dir.TrimEnd("\"),
             [StringComparison]::OrdinalIgnoreCase
         )) {
-            $AlreadyPresent = $true
+            $Exists = $true
             break
         }
     }
 
-    if (-not $AlreadyPresent) {
-        $NewPath = if ($UserPath.Trim()) {
+    if (-not $Exists) {
+        $NewPath = if ($UserPath) {
             $UserPath.TrimEnd(";") + ";" + $Dir
         } else {
             $Dir
         }
 
-        [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
-        Say "Added installation directory to user PATH"
+        [Environment]::SetEnvironmentVariable(
+            "Path",
+            $NewPath,
+            "User"
+        )
     }
 
-    # Make p2i available immediately in this PowerShell session.
     if (-not (($env:Path -split ";") | Where-Object {
         [string]::Equals(
             $_.TrimEnd("\"),
@@ -181,23 +252,39 @@ try {
             [StringComparison]::OrdinalIgnoreCase
         )
     })) {
-        $env:Path = $env:Path.TrimEnd(";") + ";" + $Dir
+        $env:Path += ";$Dir"
     }
 
-    # PowerShell function: works immediately, including paths with spaces.
+    # --------------------------------------------------
+    # Immediate PowerShell command
+    # --------------------------------------------------
+
     $P2iScript = Join-Path $Dir "p2i.py"
     $P2iExe = $PyExe
-    $P2iArgs = @($PyArgs)
+    $P2iPythonArgs = @($PyArgs)
 
-    Set-Item -Path Function:global:p2i -Value {
-        & $P2iExe @P2iArgs $P2iScript @args
-    }.GetNewClosure()
+    $P2iFunction = ({
+        param(
+            [Parameter(ValueFromRemainingArguments = $true)]
+            [string[]]$Arguments
+        )
 
-    Progress 5 5 "Installation complete"
+        & $P2iExe @P2iPythonArgs $P2iScript @Arguments
+    }).GetNewClosure()
+
+    Set-Item -Path Function:\global:p2i -Value $P2iFunction
+
+    # --------------------------------------------------
+    # Complete
+    # --------------------------------------------------
+
+    Progress 6 6 "Installation complete"
 
     Write-Host ""
     Say "PY2ISO installed successfully."
     Say "Location: $Dir"
+    Say "Git: installed and available"
+    Say "Python: verified"
     Say "Command: p2i"
     Write-Host ""
     Say "Try: p2i cook .\myproj"
@@ -205,7 +292,7 @@ try {
 }
 finally {
     if (Test-Path -LiteralPath $Tmp) {
-        Remove-Item -LiteralPath $Tmp -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $Tmp -Recurse -Force `
+            -ErrorAction SilentlyContinue
     }
 }
-```
