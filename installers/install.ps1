@@ -1,4 +1,4 @@
-```powershell
+
 # ============================================================
 # PY2ISO Windows Installer
 # PowerShell 5.1 / 7+
@@ -613,4 +613,4 @@ Write-Host ""
 Write-Host "The p2i command is available in this PowerShell session."
 Write-Host "Open a new terminal to use p2i from CMD or other shells."
 Write-Host ""
-```
+
