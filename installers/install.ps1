@@ -44,11 +44,7 @@ function Die([string]$Message) {
 # Progress
 # --------------------------------------------------
 
-function Progress(
-    [int]$Current,
-    [int]$Total,
-    [string]$Label
-) {
+function Progress([int]$Current, [int]$Total, [string]$Label) {
     $Width = 30
     $Filled = [int][Math]::Floor($Current * $Width / $Total)
     $Empty = $Width - $Filled
@@ -66,39 +62,165 @@ function Progress(
 }
 
 # --------------------------------------------------
-# Requirements
+# TLS and PATH
 # --------------------------------------------------
 
-Progress 1 6 "Checking dependencies"
-
-# Enable TLS 1.2 for Windows PowerShell 5.1.
 try {
     [Net.ServicePointManager]::SecurityProtocol = `
         [Net.ServicePointManager]::SecurityProtocol -bor `
         [Net.SecurityProtocolType]::Tls12
 } catch {}
 
-# Check Python.
-if (Get-Command py -ErrorAction SilentlyContinue) {
-    $PyExe = "py"
-    $PyArgs = @("-3")
-} elseif (Get-Command python -ErrorAction SilentlyContinue) {
-    $PyExe = "python"
-    $PyArgs = @()
-} else {
-    Die "Python 3.10+ is required. Install: winget install Python.Python.3.12"
-}
+function Refresh-Path {
+    $Machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $User = [Environment]::GetEnvironmentVariable("Path", "User")
 
-& $PyExe @PyArgs -c `
-    "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" `
-    *> $null
+    $env:Path = @($Machine, $User) -join ";"
 
-if ($LASTEXITCODE -ne 0) {
-    Die "Python 3.10 or newer is required."
+    $ExtraPaths = @(
+        "$env:ProgramFiles\Git\cmd",
+        "$env:LOCALAPPDATA\Programs\Git\cmd",
+        "$env:LOCALAPPDATA\Programs\Python\Python312",
+        "$env:LOCALAPPDATA\Programs\Python\Python312\Scripts",
+        "$env:LOCALAPPDATA\Programs\Python\Python314",
+        "$env:LOCALAPPDATA\Programs\Python\Python314\Scripts"
+    )
+
+    foreach ($Entry in $ExtraPaths) {
+        if ((Test-Path $Entry) -and
+            (($env:Path -split ";") -notcontains $Entry)) {
+            $env:Path += ";$Entry"
+        }
+    }
 }
 
 # --------------------------------------------------
-# Temporary directory
+# Python detection
+# --------------------------------------------------
+
+function Get-Python {
+    $Candidates = @()
+
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        $Candidates += @{ Exe = "py"; Args = @("-3") }
+    }
+
+    if (Get-Command python -ErrorAction SilentlyContinue) {
+        $Candidates += @{ Exe = "python"; Args = @() }
+    }
+
+    foreach ($Candidate in $Candidates) {
+        & $Candidate.Exe @($Candidate.Args) -c `
+            "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" `
+            *> $null
+
+        if ($LASTEXITCODE -eq 0) {
+            return $Candidate
+        }
+    }
+
+    return $null
+}
+
+# --------------------------------------------------
+# Python installation
+# --------------------------------------------------
+
+function Install-Python {
+    Say "Python 3.10+ not found. Installing Python..."
+
+    $Winget = Get-Command winget -ErrorAction SilentlyContinue
+
+    if ($Winget) {
+        Say "Using WinGet"
+
+        & winget install `
+            --id Python.Python.3.14 `
+            --exact `
+            --scope user `
+            --silent `
+            --accept-package-agreements `
+            --accept-source-agreements `
+            --disable-interactivity *> $null
+
+        Refresh-Path
+
+        $Python = Get-Python
+
+        if ($Python) {
+            Say "Python installed successfully."
+            return $Python
+        }
+
+        Say "WinGet installation unavailable. Trying official HTTPS installer."
+    }
+
+    # Official Python installer fallback.
+    $Architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+
+    switch ($Architecture) {
+        "X64" {
+            $PythonUrl = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
+        }
+        "Arm64" {
+            $PythonUrl = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-arm64.exe"
+        }
+        "X86" {
+            $PythonUrl = "https://www.python.org/ftp/python/3.12.10/python-3.12.10.exe"
+        }
+        default {
+            Die "Unsupported Windows architecture: $Architecture"
+        }
+    }
+
+    $Installer = Join-Path ([IO.Path]::GetTempPath()) "py2iso-python-installer.exe"
+
+    try {
+        Say "Downloading Python from python.org"
+
+        Invoke-WebRequest `
+            -Uri $PythonUrl `
+            -OutFile $Installer `
+            -UseBasicParsing
+
+        Say "Installing Python silently"
+
+        $Process = Start-Process `
+            -FilePath $Installer `
+            -ArgumentList @(
+                "/quiet",
+                "InstallAllUsers=0",
+                "PrependPath=1",
+                "Include_launcher=1",
+                "Include_pip=1",
+                "Include_test=0"
+            ) `
+            -Wait `
+            -PassThru
+
+        if ($Process.ExitCode -notin @(0, 3010)) {
+            Die "Python installation failed. Exit code: $($Process.ExitCode)"
+        }
+    }
+    finally {
+        Remove-Item $Installer -Force -ErrorAction SilentlyContinue
+    }
+
+    Refresh-Path
+
+    $Python = Get-Python
+
+    if (-not $Python) {
+        Die "Python installation completed, but Python 3.10+ could not be detected. Restart PowerShell and retry."
+    }
+
+    Say "Python installed successfully."
+
+    return $Python
+}
+
+# --------------------------------------------------
+# Main installation
 # --------------------------------------------------
 
 $Tmp = Join-Path ([IO.Path]::GetTempPath()) (
@@ -106,9 +228,16 @@ $Tmp = Join-Path ([IO.Path]::GetTempPath()) (
 )
 
 try {
-    $null = New-Item -ItemType Directory -Path $Tmp -Force
+    Progress 1 6 "Checking dependencies"
 
-    $Src = $null
+    $Python = Get-Python
+
+    if (-not $Python) {
+        $Python = Install-Python
+    }
+
+    $PyExe = $Python.Exe
+    $PyArgs = @($Python.Args)
 
     # --------------------------------------------------
     # Download repository
@@ -116,10 +245,11 @@ try {
 
     Progress 2 6 "Downloading repository"
 
+    $null = New-Item -ItemType Directory -Path $Tmp -Force
+
+    $Src = $null
+
     if (Get-Command git -ErrorAction SilentlyContinue) {
-
-        Say "Using Git"
-
         $GitDir = Join-Path $Tmp "repo"
 
         & git clone --depth 1 $Repo $GitDir *> $null
@@ -127,8 +257,10 @@ try {
         if ($LASTEXITCODE -eq 0) {
             $Src = Join-Path $GitDir $File
         } else {
-            Say "Git clone failed. Switching to HTTPS download."
+            Say "Git failed. Switching to HTTPS."
         }
+    } else {
+        Say "Git not found. Using HTTPS."
     }
 
     # --------------------------------------------------
@@ -136,9 +268,6 @@ try {
     # --------------------------------------------------
 
     if (-not $Src -or -not (Test-Path -LiteralPath $Src -PathType Leaf)) {
-
-        Say "Using HTTPS download"
-
         $ZipPath = Join-Path $Tmp "py2iso.zip"
         $ExtractPath = Join-Path $Tmp "extract"
 
@@ -146,8 +275,7 @@ try {
             Invoke-WebRequest `
                 -Uri $ZipUrl `
                 -OutFile $ZipPath `
-                -UseBasicParsing `
-                -ErrorAction Stop
+                -UseBasicParsing
 
             Expand-Archive `
                 -LiteralPath $ZipPath `
@@ -155,14 +283,13 @@ try {
                 -Force
 
             $Src = Join-Path $ExtractPath "py2iso-main\$File"
-
         } catch {
-            Die "HTTPS download failed: $($_.Exception.Message)"
+            Die "Repository HTTPS download failed: $($_.Exception.Message)"
         }
     }
 
     if (-not (Test-Path -LiteralPath $Src -PathType Leaf)) {
-        Die "$File was not found in the downloaded repository."
+        Die "$File not found in repository."
     }
 
     # --------------------------------------------------
@@ -173,22 +300,16 @@ try {
 
     $null = New-Item -ItemType Directory -Force -Path $Dir
 
-    Copy-Item `
-        -LiteralPath $Src `
-        -Destination (Join-Path $Dir "p2i.py") `
-        -Force
+    Copy-Item -LiteralPath $Src `
+        -Destination (Join-Path $Dir "p2i.py") -Force
 
     # --------------------------------------------------
-    # Create CMD launcher
+    # CMD launcher
     # --------------------------------------------------
 
     Progress 4 6 "Creating command launcher"
 
-    $Run = if ($PyExe -eq "py") {
-        "py -3"
-    } else {
-        "python"
-    }
+    $Run = if ($PyExe -eq "py") { "py -3" } else { "python" }
 
     $Shim = "@echo off`r`n$Run ""%~dp0p2i.py"" %*`r`n"
 
@@ -199,7 +320,7 @@ try {
     )
 
     # --------------------------------------------------
-    # Configure persistent PATH
+    # PATH
     # --------------------------------------------------
 
     Progress 5 6 "Configuring PATH"
@@ -210,16 +331,11 @@ try {
         $UserPath = ""
     }
 
-    $Entries = @(
-        $UserPath -split ";" |
-        Where-Object { $_.Trim() -ne "" }
-    )
-
     $Exists = $false
 
-    foreach ($Entry in $Entries) {
+    foreach ($Entry in ($UserPath -split ";")) {
         if ([string]::Equals(
-            $Entry.TrimEnd("\"),
+            $Entry.Trim().TrimEnd("\"),
             $Dir.TrimEnd("\"),
             [StringComparison]::OrdinalIgnoreCase
         )) {
@@ -235,17 +351,12 @@ try {
             $Dir
         }
 
-        [Environment]::SetEnvironmentVariable(
-            "Path",
-            $NewPath,
-            "User"
-        )
+        [Environment]::SetEnvironmentVariable("Path", $NewPath, "User")
     }
 
-    # Update current session PATH.
     if (-not (($env:Path -split ";") | Where-Object {
         [string]::Equals(
-            $_.TrimEnd("\"),
+            $_.Trim().TrimEnd("\"),
             $Dir.TrimEnd("\"),
             [StringComparison]::OrdinalIgnoreCase
         )
@@ -254,7 +365,7 @@ try {
     }
 
     # --------------------------------------------------
-    # Register immediate PowerShell command
+    # Immediate PowerShell function
     # --------------------------------------------------
 
     $P2iScript = Join-Path $Dir "p2i.py"
@@ -280,8 +391,9 @@ try {
 
     Write-Host ""
     Say "PY2ISO installed successfully."
+    Say "Python: verified"
+    Say "Git: optional"
     Say "Location: $Dir"
-    Say "Download method: $(if (Get-Command git -ErrorAction SilentlyContinue) { 'Git / HTTPS fallback' } else { 'HTTPS' })"
     Say "Command: p2i"
     Write-Host ""
     Say "Try: p2i cook .\myproj"
