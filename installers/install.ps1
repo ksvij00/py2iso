@@ -1,4 +1,3 @@
-```powershell
 # PY2ISO installer for Windows (PowerShell 5.1 / 7+)
 # irm https://raw.githubusercontent.com/ksvij00/py2iso/main/installers/install.ps1 | iex
 
@@ -406,4 +405,4 @@ finally {
             -ErrorAction SilentlyContinue
     }
 }
-```
+
