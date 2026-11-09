@@ -33,7 +33,7 @@ A simple installation experience for PY2ISO.
 
 ## Installer Status
 
-[![Windows Installer](https://github.com/ksvij00/py2iso/actions/workflows/windows.yaml/badge.svg)](https://github.com/ksvij00/py2iso/actions/workflows/windows.yaml)
+[![Windows Installer](https://github.com/ksvij00/py2iso/actions/workflows/windows.yaml/badge.svg?branch=main)](https://github.com/ksvij00/py2iso/actions/workflows/windows.yaml)
 
 ---
 
