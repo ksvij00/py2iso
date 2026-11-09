@@ -1,616 +1,225 @@
+<#
+.SYNOPSIS
+    py2iso installer for Windows (PowerShell 5.1+ and PowerShell 7+).
 
-# ============================================================
-# PY2ISO Windows Installer
-# PowerShell 5.1 / 7+
-#
-# Usage:
-# irm "https://raw.githubusercontent.com/ksvij00/py2iso/main/installers/install.ps1" | iex
-#
-# Optional:
-# $env:PY2ISO_HOME = "C:\tools\py2iso"
-# ============================================================
+.DESCRIPTION
+    Finds Python 3.8+, creates a virtual environment, installs py2iso
+    (from the local repo checkout if present, otherwise from PyPI),
+    and verifies the install.
 
-$ErrorActionPreference = "Stop"
+    This file is pure ASCII on purpose: no smart quotes, no box-drawing
+    characters, so it parses the same on every encoding.
 
-# ------------------------------------------------------------
-# Configuration
-# ------------------------------------------------------------
+.PARAMETER InstallDir
+    Where the virtual environment is created. Default: $env:LOCALAPPDATA\py2iso
 
-$RepoUrl = "https://github.com/ksvij00/py2iso.git"
-$ZipUrl = "https://codeload.github.com/ksvij00/py2iso/zip/refs/heads/main"
+.PARAMETER Package
+    Package spec to install when no local checkout is found. Default: py2iso
 
-$PythonVersion = "3.12.10"
-$PythonInstallerUrl = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
+.PARAMETER NoLogo
+    Skip the banner (useful in CI).
 
-$InstallDir = if ($env:PY2ISO_HOME) {
-    $env:PY2ISO_HOME
-} else {
-    Join-Path $env:LOCALAPPDATA "Programs\py2iso"
-}
+.EXAMPLE
+    .\install.ps1
+    .\install.ps1 -InstallDir C:\tools\py2iso -NoLogo
+#>
+[CmdletBinding()]
+param(
+    [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'py2iso'),
+    [string]$Package    = 'py2iso',
+    [switch]$NoLogo
+)
 
-$ScriptPath = Join-Path $InstallDir "bin\p2i.py"
-$CmdPath = Join-Path $InstallDir "p2i.cmd"
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
-# ------------------------------------------------------------
-# Output functions
-# ------------------------------------------------------------
+$MinPython = [version]'3.8'
 
-function Say {
-    param([string]$Message)
-
-    Write-Host "[PY2ISO] $Message" -ForegroundColor Cyan
-}
-
-function Info {
-    param([string]$Message)
-
-    Write-Host "         $Message" -ForegroundColor Gray
-}
-
-function Die {
-    param([string]$Message)
-
-    Write-Host ""
-    Write-Host "[PY2ISO] ERROR: $Message" -ForegroundColor Red
-    exit 1
-}
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+function Write-Step { param([string]$Message) Write-Host "[*] $Message" -ForegroundColor Cyan }
+function Write-Ok   { param([string]$Message) Write-Host "[+] $Message" -ForegroundColor Green }
+function Write-Warn { param([string]$Message) Write-Host "[!] $Message" -ForegroundColor Yellow }
+function Write-Fail { param([string]$Message) Write-Host "[x] $Message" -ForegroundColor Red }
 
 function Show-Logo {
-    Write-Host ""
-    Write-Host "██████╗ ██╗   ██╗██████╗ ██╗███████╗ ██████╗" -ForegroundColor Cyan
-    Write-Host "██╔══██╗╚██╗ ██╔╝╚════██╗██║██╔════╝██╔═══██╗" -ForegroundColor Cyan
-    Write-Host "██████╔╝ ╚████╔╝ █████╔╝██║███████╗██║   ██║" -ForegroundColor Cyan
-    Write-Host "██╔═══╝   ╚██╔╝  ██╔═══╝ ██║╚════██║██║   ██║" -ForegroundColor Cyan
-    Write-Host "██║        ██║   ███████╗██║███████║╚██████╔╝" -ForegroundColor Cyan
-    Write-Host "╚═╝        ╚═╝   ╚══════╝╚═╝╚══════╝ ╚═════╝" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "Python to ISO installer for Windows" -ForegroundColor White
-    Write-Host ""
+    # Single-quoted here-string: everything between @' and '@ is literal.
+    # Quotes, $, backticks and backslashes inside the art are all safe.
+    # RULE: the closing '@ must be at column 0 on its own line.
+    $logo = @'
+                 ____  _
+  _ __  _   _ |___ \(_)___  ___
+ | '_ \| | | |  __) | / __|/ _ \
+ | |_) | |_| | / __/| \__ \ (_) |
+ | .__/ \__, ||_____|_|___/\___/
+ |_|    |___/
+
+   Python -> bootable ISO
+'@
+    Write-Host $logo -ForegroundColor Magenta
+    Write-Host ''
 }
 
-# ------------------------------------------------------------
-# Progress
-# ------------------------------------------------------------
-
-function Show-Progress {
-    param(
-        [int]$Step,
-        [int]$Total,
-        [string]$Message
-    )
-
-    $Percent = [math]::Min(
-        100,
-        [math]::Max(0, [int](($Step / $Total) * 100))
-    )
-
-    Write-Progress `
-        -Activity "Installing PY2ISO" `
-        -Status $Message `
-        -PercentComplete $Percent
-}
-
-# ------------------------------------------------------------
-# Platform check
-# ------------------------------------------------------------
-
-if ($env:OS -ne "Windows_NT") {
-    Die "This installer requires Windows. Use install.sh on Linux or macOS."
-}
-
-# Enable TLS 1.2 for Windows PowerShell 5.1.
-try {
-    [Net.ServicePointManager]::SecurityProtocol = `
-        [Net.ServicePointManager]::SecurityProtocol -bor `
-        [Net.SecurityProtocolType]::Tls12
-} catch {}
-
-# ------------------------------------------------------------
-# PATH handling
-# ------------------------------------------------------------
-
-function Refresh-Path {
-    $MachinePath = [Environment]::GetEnvironmentVariable(
-        "Path",
-        [EnvironmentVariableTarget]::Machine
-    )
-
-    $UserPath = [Environment]::GetEnvironmentVariable(
-        "Path",
-        [EnvironmentVariableTarget]::User
-    )
-
-    $env:Path = @(
-        $MachinePath
-        $UserPath
-        $env:Path
-    ) -join ";"
-}
-
-function Add-UserPath {
-    param([string]$NewPath)
-
-    if (-not (Test-Path $NewPath)) {
-        return
-    }
-
-    $UserPath = [Environment]::GetEnvironmentVariable(
-        "Path",
-        [EnvironmentVariableTarget]::User
-    )
-
-    $Entries = @($UserPath -split ";" | Where-Object { $_ })
-
-    foreach ($Entry in $Entries) {
-        if ($Entry.TrimEnd("\") -ieq $NewPath.TrimEnd("\")) {
-            return
-        }
-    }
-
-    $Entries += $NewPath
-
-    [Environment]::SetEnvironmentVariable(
-        "Path",
-        ($Entries -join ";"),
-        [EnvironmentVariableTarget]::User
-    )
-
-    if ($env:Path -notlike "*$NewPath*") {
-        $env:Path = "$NewPath;$env:Path"
-    }
-}
-
-# ------------------------------------------------------------
-# Python detection
-# ------------------------------------------------------------
-
-function Test-Python {
-    param(
-        [string]$Exe,
-        [string[]]$Args = @()
-    )
-
-    if (-not $Exe) {
-        return $null
-    }
+# ---------------------------------------------------------------------------
+# Python discovery
+# ---------------------------------------------------------------------------
+function Test-PythonExe {
+    # Returns a PSCustomObject {Exe, Version} if the exe is a usable Python, else $null.
+    param([string]$Exe, [string[]]$ExtraArgs = @())
 
     try {
-        $Output = & $Exe @Args -c "import sys; print('%s.%s.%s' % sys.version_info[:3])" 2>$null
+        $code = 'import sys; print("%d.%d.%d" % sys.version_info[:3])'
+        $out  = & $Exe @ExtraArgs -c $code 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+        $ver = [version]($out | Select-Object -First 1).Trim()
+        if ($ver -lt $MinPython) { return $null }
 
-        if ($LASTEXITCODE -ne 0) {
-            return $null
-        }
+        # Resolve the real interpreter path (py.exe is only a launcher).
+        $real = & $Exe @ExtraArgs -c 'import sys; print(sys.executable)' 2>$null
+        $real = ($real | Select-Object -First 1).Trim()
+        if (-not $real) { return $null }
 
-        $VersionText = ($Output | Select-Object -Last 1).ToString().Trim()
-
-        if ($VersionText -notmatch '^\d+\.\d+\.\d+$') {
-            return $null
-        }
-
-        $Version = [version]$VersionText
-
-        if ($Version -lt [version]"3.10.0") {
-            return $null
-        }
-
-        return [PSCustomObject]@{
-            Exe     = $Exe
-            Args    = @($Args)
-            Version = $VersionText
-        }
+        return [pscustomobject]@{ Exe = $real; Version = $ver }
     }
     catch {
         return $null
     }
 }
 
-function Get-Python {
-    Refresh-Path
+function Find-Python {
+    # 1) py launcher, 2) python, 3) python3
+    $candidates = @(
+        @{ Name = 'py';      Args = @('-3') },
+        @{ Name = 'python';  Args = @() },
+        @{ Name = 'python3'; Args = @() }
+    )
 
-    # Python launcher.
-    $Launcher = Get-Command "py.exe" -ErrorAction SilentlyContinue
+    foreach ($c in $candidates) {
+        $cmd = Get-Command $c.Name -ErrorAction SilentlyContinue
+        if (-not $cmd) { continue }
 
-    if ($Launcher) {
-        $Result = Test-Python -Exe $Launcher.Source -Args @("-3")
-
-        if ($Result) {
-            return $Result
+        # Skip the Microsoft Store stub in WindowsApps; it opens the Store instead of running Python.
+        if ($cmd.Source -like '*\WindowsApps\*' -and $c.Name -ne 'py') {
+            $probe = Test-PythonExe -Exe $cmd.Source -ExtraArgs $c.Args
+            if (-not $probe) { continue }
         }
+
+        $found = Test-PythonExe -Exe $cmd.Source -ExtraArgs $c.Args
+        if ($found) { return $found }
     }
-
-    # Python in PATH.
-    $Commands = Get-Command "python.exe" -All -ErrorAction SilentlyContinue
-
-    foreach ($Command in $Commands) {
-        $Exe = $Command.Source
-
-        if (-not $Exe) {
-            continue
-        }
-
-        # Ignore Microsoft Store aliases.
-        if ($Exe -match "\\WindowsApps\\") {
-            continue
-        }
-
-        $Result = Test-Python -Exe $Exe
-
-        if ($Result) {
-            return $Result
-        }
-    }
-
-    # Per-user Python installations.
-    $LocalPython = Join-Path $env:LOCALAPPDATA "Programs\Python"
-
-    if (Test-Path $LocalPython) {
-        $Candidates = Get-ChildItem $LocalPython -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending
-
-        foreach ($Directory in $Candidates) {
-            $Exe = Join-Path $Directory.FullName "python.exe"
-
-            if (Test-Path $Exe) {
-                $Result = Test-Python -Exe $Exe
-
-                if ($Result) {
-                    return $Result
-                }
-            }
-        }
-    }
-
     return $null
 }
 
-# ------------------------------------------------------------
-# Download helper
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+function Install-Py2Iso {
+    if (-not $NoLogo) { Show-Logo }
 
-function Download-File {
-    param(
-        [string]$Url,
-        [string]$Destination
-    )
-
-    for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
-        Say "Downloading (attempt $Attempt/3)..."
-
-        Remove-Item $Destination -Force -ErrorAction SilentlyContinue
-
-        try {
-            Invoke-WebRequest `
-                -Uri $Url `
-                -OutFile $Destination `
-                -UseBasicParsing `
-                -TimeoutSec 180 `
-                -ErrorAction Stop
-
-            if (
-                (Test-Path $Destination) -and
-                (Get-Item $Destination).Length -gt 0
-            ) {
-                return $true
-            }
-        }
-        catch {
-            Say "PowerShell download failed. Trying curl.exe..."
-
-            $Curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
-
-            if ($Curl) {
-                $CurlOut = Join-Path $env:TEMP "py2iso-curl-out.txt"
-                $CurlErr = Join-Path $env:TEMP "py2iso-curl-err.txt"
-
-                try {
-                    $Process = Start-Process `
-                        -FilePath $Curl.Source `
-                        -ArgumentList @(
-                            "-fL",
-                            "--connect-timeout", "20",
-                            "--max-time", "300",
-                            "--retry", "2",
-                            "`"$Url`"",
-                            "-o",
-                            "`"$Destination`""
-                        ) `
-                        -Wait `
-                        -PassThru `
-                        -NoNewWindow `
-                        -RedirectStandardOutput $CurlOut `
-                        -RedirectStandardError $CurlErr
-
-                    if (
-                        $Process.ExitCode -eq 0 -and
-                        (Test-Path $Destination) -and
-                        (Get-Item $Destination).Length -gt 0
-                    ) {
-                        Remove-Item $CurlOut, $CurlErr -Force -ErrorAction SilentlyContinue
-                        return $true
-                    }
-                }
-                catch {
-                    Say "curl.exe failed: $($_.Exception.Message)"
-                }
-                finally {
-                    Remove-Item $CurlOut, $CurlErr -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
-
-        Remove-Item $Destination -Force -ErrorAction SilentlyContinue
-
-        if ($Attempt -lt 3) {
-            Start-Sleep -Seconds 3
-        }
+    Write-Step 'Looking for Python...'
+    $Python = Find-Python
+    if (-not $Python) {
+        Write-Fail ("Python {0}+ was not found on PATH." -f $MinPython)
+        Write-Host '    Install it from https://www.python.org/downloads/ (tick "Add python.exe to PATH"),'
+        Write-Host '    or run: winget install Python.Python.3.12'
+        exit 1
     }
+    Write-Ok ("Using Python {0} at {1}" -f $Python.Version, $Python.Exe)
 
-    return $false
-}
+    # Do NOT build command strings with embedded quotes. Keep the path as a plain
+    # string and call it with the & operator; PowerShell handles spaces for you.
+    $PythonExe = $Python.Exe
 
-# ------------------------------------------------------------
-# Install Python
-# ------------------------------------------------------------
-
-function Install-Python {
-    $PythonDir = Join-Path $env:LOCALAPPDATA "Programs\Python\Python312"
-    $PythonExe = Join-Path $PythonDir "python.exe"
-    $Installer = Join-Path $env:TEMP "py2iso-python-installer.exe"
-
-    Say "Python 3.10+ not found."
-    Say "Installing Python $PythonVersion..."
-
-    if (-not (Download-File -Url $PythonInstallerUrl -Destination $Installer)) {
-        Die "Could not download Python. Check your internet connection."
-    }
-
-    try {
-        Say "Running Python installer..."
-
-        $Process = Start-Process `
-            -FilePath $Installer `
-            -ArgumentList @(
-                "/quiet",
-                "InstallAllUsers=0",
-                "PrependPath=0",
-                "Include_test=0",
-                "TargetDir=`"$PythonDir`""
-            ) `
-            -Wait `
-            -PassThru
-
-        if ($Process.ExitCode -ne 0) {
-            Die "Python installer failed with exit code $($Process.ExitCode)."
-        }
-
-        if (-not (Test-Path $PythonExe)) {
-            Die "Python installation finished, but python.exe was not found at $PythonExe"
-        }
-
-        $Result = Test-Python -Exe $PythonExe
-
-        if (-not $Result) {
-            Die "Python was installed but failed the version check."
-        }
-
-        Add-UserPath $PythonDir
-        Add-UserPath (Join-Path $PythonDir "Scripts")
-
-        Say "Python successfully installed: $($Result.Version)"
-
-        return $Result
-    }
-    finally {
-        Remove-Item $Installer -Force -ErrorAction SilentlyContinue
-    }
-}
-
-# ------------------------------------------------------------
-# Install repository
-# ------------------------------------------------------------
-
-function Install-Repository {
-    $TempRoot = Join-Path $env:TEMP (
-        "py2iso-" + [guid]::NewGuid().ToString("N")
-    )
-
-    $SourceDir = Join-Path $TempRoot "source"
-
-    New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
-
-    try {
-        $Git = Get-Command "git.exe" -ErrorAction SilentlyContinue
-        $GitSuccess = $false
-
-        # Try Git first.
-        if ($Git) {
-            Say "Git found. Cloning repository..."
-
-            $GitOut = Join-Path $TempRoot "git-output.txt"
-            $GitErr = Join-Path $TempRoot "git-error.txt"
-
-            try {
-                $Process = Start-Process `
-                    -FilePath $Git.Source `
-                    -ArgumentList @(
-                        "clone",
-                        "--depth",
-                        "1",
-                        "`"$RepoUrl`"",
-                        "`"$SourceDir`""
-                    ) `
-                    -Wait `
-                    -PassThru `
-                    -NoNewWindow `
-                    -RedirectStandardOutput $GitOut `
-                    -RedirectStandardError $GitErr
-
-                if (
-                    $Process.ExitCode -eq 0 -and
-                    (Test-Path (Join-Path $SourceDir "bin\p2i.py"))
-                ) {
-                    $GitSuccess = $true
-                    Say "Repository cloned successfully."
-                }
-                else {
-                    Say "Git clone failed. Switching to HTTPS download..."
-                }
-            }
-            catch {
-                Say "Git clone failed: $($_.Exception.Message)"
-                Say "Switching to HTTPS download..."
-            }
-        }
-        else {
-            Say "Git not found. Using HTTPS download..."
-        }
-
-        # HTTPS ZIP fallback.
-        if (-not $GitSuccess) {
-            $ZipFile = Join-Path $TempRoot "py2iso.zip"
-
-            if (-not (Download-File -Url $ZipUrl -Destination $ZipFile)) {
-                Die "Could not download the PY2ISO repository."
-            }
-
-            Say "Extracting repository..."
-
-            Expand-Archive `
-                -Path $ZipFile `
-                -DestinationPath $TempRoot `
-                -Force
-
-            $SourceDir = Join-Path $TempRoot "py2iso-main"
-
-            if (-not (Test-Path (Join-Path $SourceDir "bin\p2i.py"))) {
-                Die "The downloaded repository does not contain bin\p2i.py."
-            }
-        }
-
-        # Verify source.
-        if (-not (Test-Path (Join-Path $SourceDir "bin\p2i.py"))) {
-            Die "Repository is missing bin\p2i.py."
-        }
-
-        Say "Installing PY2ISO files..."
-
+    # --- Virtual environment ------------------------------------------------
+    Write-Step "Creating virtual environment in $InstallDir"
+    if (-not (Test-Path -LiteralPath $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-
-        Copy-Item `
-            -Path (Join-Path $SourceDir "*") `
-            -Destination $InstallDir `
-            -Recurse `
-            -Force
-
-        if (-not (Test-Path $ScriptPath)) {
-            Die "Installation failed. p2i.py was not found."
-        }
-    }
-    finally {
-        Remove-Item $TempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
-# ------------------------------------------------------------
-# Add PY2ISO to PATH
-# ------------------------------------------------------------
-
-function Add-InstallPath {
-    Add-UserPath $InstallDir
-}
-
-# ------------------------------------------------------------
-# Create CMD launcher
-# ------------------------------------------------------------
-
-function Create-CmdLauncher {
-    param($Python)
-
-    $PythonCommand = '"' + $Python.Exe + '"'
-    $PythonArguments = ""
-
-    if ($Python.Args.Count -gt 0) {
-        $PythonArguments = " " + ($Python.Args -join " ")
     }
 
-    $Launcher = @"
-@echo off
-$PythonCommand$PythonArguments "%~dp0bin\p2i.py" %*
-"@
+    $VenvDir    = Join-Path $InstallDir 'venv'
+    $VenvPython = Join-Path $VenvDir 'Scripts\python.exe'
 
-    Set-Content `
-        -Path $CmdPath `
-        -Value $Launcher `
-        -Encoding ASCII
+    if (-not (Test-Path -LiteralPath $VenvPython)) {
+        & $PythonExe -m venv $VenvDir
+        if ($LASTEXITCODE -ne 0) { throw 'Failed to create the virtual environment.' }
+    }
+    else {
+        Write-Warn 'Existing virtual environment found; reusing it.'
+    }
 
-    Say "Created p2i.cmd"
+    # --- pip ----------------------------------------------------------------
+    Write-Step 'Upgrading pip...'
+    & $VenvPython -m pip install --upgrade pip --disable-pip-version-check
+    if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed.' }
+
+    # --- py2iso -------------------------------------------------------------
+    # Prefer the local checkout (this script lives in <repo>\installers\).
+    $RepoRoot = Split-Path -Parent $PSScriptRoot
+    $HasLocal = $RepoRoot -and (
+        (Test-Path -LiteralPath (Join-Path $RepoRoot 'pyproject.toml')) -or
+        (Test-Path -LiteralPath (Join-Path $RepoRoot 'setup.py'))
+    )
+
+    if ($HasLocal) {
+        Write-Step "Installing py2iso from local checkout: $RepoRoot"
+        & $VenvPython -m pip install --disable-pip-version-check $RepoRoot
+    }
+    else {
+        Write-Step "Installing $Package from PyPI"
+        & $VenvPython -m pip install --disable-pip-version-check $Package
+    }
+    if ($LASTEXITCODE -ne 0) { throw 'py2iso installation failed.' }
+
+    $ReqFile = if ($RepoRoot) { Join-Path $RepoRoot 'requirements.txt' } else { $null }
+    if ($ReqFile -and (Test-Path -LiteralPath $ReqFile)) {
+        Write-Step 'Installing requirements.txt...'
+        & $VenvPython -m pip install --disable-pip-version-check -r $ReqFile
+        if ($LASTEXITCODE -ne 0) { throw 'Installing requirements.txt failed.' }
+    }
+
+    # --- Verify -------------------------------------------------------------
+    Write-Step 'Verifying install...'
+    & $VenvPython -c 'import py2iso; print("py2iso imported OK")'
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn 'Could not import "py2iso" as a module. If your entry point is a script, this is fine.'
+    }
+
+    # --- Launcher shim ------------------------------------------------------
+    $BinDir  = Join-Path $InstallDir 'bin'
+    $Shim    = Join-Path $BinDir 'py2iso.cmd'
+    if (-not (Test-Path -LiteralPath $BinDir)) {
+        New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+    }
+    $shimLines = @(
+        '@echo off',
+        ('"{0}" -m py2iso %*' -f $VenvPython)
+    )
+    Set-Content -LiteralPath $Shim -Value $shimLines -Encoding Ascii
+    Write-Ok "Launcher created: $Shim"
+
+    # --- PATH (per-user) ----------------------------------------------------
+    $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if (-not $UserPath) { $UserPath = '' }
+    $already = ($UserPath -split ';') | Where-Object { $_ -ieq $BinDir }
+    if (-not $already) {
+        $newPath = if ($UserPath) { "$UserPath;$BinDir" } else { $BinDir }
+        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        $env:Path = "$env:Path;$BinDir"
+        Write-Ok 'Added install folder to your user PATH (open a new terminal to use it).'
+    }
+
+    Write-Host ''
+    Write-Ok 'py2iso installed successfully.'
+    Write-Host "    Run:  py2iso --help"
 }
 
-# ------------------------------------------------------------
-# MAIN
-# ------------------------------------------------------------
-
-Show-Logo
-
-Show-Progress 1 5 "Checking Python"
-
-$Python = Get-Python
-
-if (-not $Python) {
-    $Python = Install-Python
+try {
+    Install-Py2Iso
+    exit 0
 }
-
-if (-not $Python) {
-    Die "Could not find or install Python 3.10+."
+catch {
+    Write-Fail $_.Exception.Message
+    if ($_.ScriptStackTrace) { Write-Host $_.ScriptStackTrace -ForegroundColor DarkGray }
+    exit 1
 }
-
-$PythonExe = $Python.Exe
-$PythonArgs = @($Python.Args)
-
-Say "Using Python: $PythonExe"
-Say "Python version: $($Python.Version)"
-
-Show-Progress 2 5 "Downloading PY2ISO"
-
-Install-Repository
-
-Show-Progress 3 5 "Configuring PATH"
-
-Add-InstallPath
-
-Show-Progress 4 5 "Creating launcher"
-
-Create-CmdLauncher -Python $Python
-
-Show-Progress 5 5 "Finishing installation"
-
-# ------------------------------------------------------------
-# Immediate PowerShell function
-# ------------------------------------------------------------
-
-$global:PY2ISO_PYTHON = $PythonExe
-$global:PY2ISO_PYTHON_ARGS = @($PythonArgs)
-$global:PY2ISO_SCRIPT = $ScriptPath
-
-function global:p2i {
-    & $global:PY2ISO_PYTHON @global:PY2ISO_PYTHON_ARGS $global:PY2ISO_SCRIPT @args
-}
-
-Write-Progress -Activity "Installing PY2ISO" -Completed
-
-Write-Host ""
-Write-Host "============================================" -ForegroundColor Green
-Write-Host "          PY2ISO INSTALLED" -ForegroundColor Green
-Write-Host "============================================" -ForegroundColor Green
-Write-Host ""
-Write-Host "Install directory: $InstallDir"
-Write-Host "Python:            $PythonExe"
-Write-Host ""
-Write-Host "Run:"
-Write-Host ""
-Write-Host "    p2i --help" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "The p2i command is available in this PowerShell session."
-Write-Host "Open a new terminal to use p2i from CMD or other shells."
-Write-Host ""
-
