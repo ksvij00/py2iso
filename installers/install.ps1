@@ -98,11 +98,15 @@ function Save-Download {
 }
 
 function Invoke-Installer {
-    param([string]$Exe, [string[]]$InstallerArgs)
+    # Returns the exit code. 0 and 3010 (reboot pending) are success; callers
+    # decide what to do with anything else listed in -TolerateCodes.
+    param([string]$Exe, [string[]]$InstallerArgs, [int[]]$TolerateCodes = @())
     $p = Start-Process -FilePath $Exe -ArgumentList $InstallerArgs -Wait -PassThru
-    if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
-        throw ("Installer exited with code {0}: {1}" -f $p.ExitCode, $Exe)
+    $code = $p.ExitCode
+    if ($code -ne 0 -and $code -ne 3010 -and ($TolerateCodes -notcontains $code)) {
+        throw ("Installer exited with code {0}: {1}" -f $code, $Exe)
     }
+    return $code
 }
 
 function Test-Winget {
@@ -168,16 +172,26 @@ function Confirm-Git {
 # ---------------------------------------------------------------------------
 # Python
 # ---------------------------------------------------------------------------
+$script:ProbeLog = New-Object System.Collections.Generic.List[string]
+
 function Test-PythonExe {
     # Returns a PSCustomObject {Exe, Version} if usable and new enough, else $null.
     param([string]$Exe, [string[]]$ExtraArgs = @())
 
+    # Windows PowerShell 5.1 turns native stderr into terminating errors under 'Stop'.
+    $ErrorActionPreference = 'Continue'
     try {
         $code = 'import sys; print("%d.%d.%d" % sys.version_info[:3])'
         $out  = & $Exe @ExtraArgs -c $code 2>$null
-        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
-        $ver = [version]($out | Select-Object -First 1).Trim()
-        if ($ver -lt $MinPython) { return $null }
+        if ($LASTEXITCODE -ne 0 -or -not $out) {
+            $script:ProbeLog.Add("$Exe : probe failed (exit $LASTEXITCODE)")
+            return $null
+        }
+        $ver = [version]($out | Select-Object -First 1).ToString().Trim()
+        if ($ver -lt $MinPython) {
+            $script:ProbeLog.Add("$Exe : version $ver is older than $MinPython")
+            return $null
+        }
 
         $real = & $Exe @ExtraArgs -c 'import sys; print(sys.executable)' 2>$null
         $real = ($real | Select-Object -First 1).Trim()
@@ -186,30 +200,78 @@ function Test-PythonExe {
         return [pscustomobject]@{ Exe = $real; Version = $ver }
     }
     catch {
+        $script:ProbeLog.Add("$Exe : $($_.Exception.Message)")
         return $null
     }
 }
 
 function Find-Python {
-    $candidates = @(
+    $script:ProbeLog.Clear()
+
+    # 1) Every python/py on PATH (Get-Command can return several; try them all).
+    $names = @(
         @{ Name = 'py';      Args = @('-3') },
         @{ Name = 'python';  Args = @() },
         @{ Name = 'python3'; Args = @() }
     )
-
-    foreach ($c in $candidates) {
-        $cmd = Get-Command $c.Name -ErrorAction SilentlyContinue
-        if (-not $cmd) { continue }
-        # The Microsoft Store stub fails the version probe, so it is skipped here.
-        $found = Test-PythonExe -Exe $cmd.Source -ExtraArgs $c.Args
-        if ($found) { return $found }
+    foreach ($c in $names) {
+        $cmds = @(Get-Command $c.Name -All -CommandType Application -ErrorAction SilentlyContinue)
+        foreach ($cmd in $cmds) {
+            if (-not $cmd.Source) { continue }
+            $found = Test-PythonExe -Exe $cmd.Source -ExtraArgs $c.Args
+            if ($found) { return $found }
+        }
     }
 
-    # Not on PATH (e.g. just installed): look in the usual install folders.
+    # 2) Interpreters advertised via environment (actions/setup-python, runner tool cache).
+    $envRoots = @($env:pythonLocation, $env:Python_ROOT_DIR, $env:Python3_ROOT_DIR) | Where-Object { $_ }
+    foreach ($r in $envRoots) {
+        $exe = Join-Path $r 'python.exe'
+        if (Test-Path -LiteralPath $exe) {
+            $found = Test-PythonExe -Exe $exe
+            if ($found) { return $found }
+        }
+    }
+    if ($env:RUNNER_TOOL_CACHE) {
+        $tc = Join-Path $env:RUNNER_TOOL_CACHE 'Python'
+        if (Test-Path -LiteralPath $tc) {
+            $exes = Get-ChildItem -LiteralPath $tc -Recurse -Filter python.exe -ErrorAction SilentlyContinue |
+                    Sort-Object FullName -Descending
+            foreach ($e in $exes) {
+                $found = Test-PythonExe -Exe $e.FullName
+                if ($found) { return $found }
+            }
+        }
+    }
+
+    # 3) Registry (PEP 514): where python.org installers register themselves.
+    $regRoots = @(
+        'HKCU:\SOFTWARE\Python\PythonCore',
+        'HKLM:\SOFTWARE\Python\PythonCore',
+        'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore'
+    )
+    foreach ($rr in $regRoots) {
+        if (-not (Test-Path -LiteralPath $rr)) { continue }
+        foreach ($k in (Get-ChildItem -LiteralPath $rr -ErrorAction SilentlyContinue)) {
+            $ipKey = Join-Path $k.PSPath 'InstallPath'
+            if (-not (Test-Path -LiteralPath $ipKey)) { continue }
+            $ip  = Get-ItemProperty -LiteralPath $ipKey -ErrorAction SilentlyContinue
+            $exe = $null
+            if ($ip -and $ip.PSObject.Properties['ExecutablePath']) { $exe = $ip.ExecutablePath }
+            elseif ($ip -and $ip.PSObject.Properties['(default)'])   { $exe = Join-Path $ip.'(default)' 'python.exe' }
+            if ($exe -and (Test-Path -LiteralPath $exe)) {
+                $found = Test-PythonExe -Exe $exe
+                if ($found) { return $found }
+            }
+        }
+    }
+
+    # 4) Usual install folders.
     $roots = @(
         (Join-Path $env:LOCALAPPDATA 'Programs\Python'),
         $env:ProgramFiles,
-        ${env:ProgramFiles(x86)}
+        ${env:ProgramFiles(x86)},
+        'C:\'
     )
     foreach ($root in $roots) {
         if (-not $root -or -not (Test-Path -LiteralPath $root)) { continue }
@@ -226,6 +288,15 @@ function Find-Python {
     return $null
 }
 
+function Show-PythonProbeLog {
+    if ($script:ProbeLog.Count -eq 0) {
+        Write-Warn 'No Python candidates were found anywhere (PATH, registry, install folders).'
+        return
+    }
+    Write-Warn 'Python candidates that were tried and rejected:'
+    foreach ($line in $script:ProbeLog) { Write-Host "      $line" -ForegroundColor DarkGray }
+}
+
 function Install-Python {
     Write-Step 'Python not found. Installing Python...'
 
@@ -234,6 +305,7 @@ function Install-Python {
         Update-SessionPath
         if (Find-Python) { return }
         Write-Warn 'winget did not produce a working Python; trying direct download.'
+        Show-PythonProbeLog
     }
 
     $arch = if ([Environment]::Is64BitOperatingSystem) { 'amd64' } else { 'win32' }
@@ -242,13 +314,20 @@ function Install-Python {
     $tmp  = Join-Path $env:TEMP $name
 
     Save-Download -Url $url -OutFile $tmp
-    Invoke-Installer -Exe $tmp -InstallerArgs @(
+    $code = Invoke-Installer -TolerateCodes @(1638) -Exe $tmp -InstallerArgs @(
         '/quiet', 'InstallAllUsers=0', 'PrependPath=1', 'Include_launcher=0', 'Include_test=0'
     )
     Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
 
+    if ($code -eq 1638) {
+        Write-Warn 'Windows reports a Python 3.12 is already installed (code 1638); locating it instead.'
+    }
+
     Update-SessionPath
-    if (-not (Find-Python)) { throw 'Python was installed but could not be located. Open a new terminal and re-run.' }
+    if (-not (Find-Python)) {
+        Show-PythonProbeLog
+        throw 'Python is installed but could not be used. See the rejected candidates above.'
+    }
 }
 
 function Confirm-Python {
