@@ -1,4 +1,4 @@
-name: Test Linux Installer
+name: Linux Installer
 
 on:
   push:
