@@ -33,10 +33,13 @@ A simple installation experience for PY2ISO.
 
 ## Installer Status
 
-[![Windows Installer](https://github.com/ksvij00/py2iso/actions/workflows/test-installer.yml/badge.svg)](https://github.com/ksvij00/py2iso/actions/workflows/test-installer.yml)
+[![Windows Installer](https://github.com/ksvij00/py2iso/actions/workflows/windows.yaml/badge.svg)](https://github.com/ksvij00/py2iso/actions/workflows/windows.yaml)
 
 ---
 
+[![Linux Installer](https://github.com/ksvij00/py2iso/actions/workflows/linux.yaml/badge.svg?branch=main)](https://github.com/ksvij00/py2iso/actions/workflows/linux.yaml)
+
+---
 
 ## What is PY2ISO?
 
