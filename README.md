@@ -31,6 +31,13 @@ A simple installation experience for PY2ISO.
 
 ---
 
+## Installer Status
+
+[![Windows Installer](https://github.com/ksvij00/py2iso/actions/workflows/test-installer.yml/badge.svg)](https://github.com/ksvij00/py2iso/actions/workflows/test-installer.yml)
+
+---
+
+
 ## What is PY2ISO?
 
 **PY2ISO** is a project designed to turn Python projects into bootable ISO images.
