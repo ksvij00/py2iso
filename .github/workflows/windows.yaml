@@ -1,0 +1,21 @@
+name: Windows Installer
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+    test-installer:
+      runs-on: windows-latest
+      steps:
+        - name: Check out repository
+          uses: actions/checkout@v4
+  
+        - name: Run PowerShell Installer
+          shell: powershell
+          run: |
+            Set-ExecutionPolicy Bypass -Scope Process -Force
+            ./installers/install.ps1
